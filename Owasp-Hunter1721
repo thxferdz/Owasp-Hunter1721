@@ -264,8 +264,6 @@ def check_directory_listing(session, base_url, current_run_timeout):
     print("[*] Menjalankan: Pengecekan Directory Listing...")
     results = []
     paths_to_check = [base_url]
-    # Untuk skrip dasar, kita hanya cek base_url.
-    # Spidering atau penambahan path umum bisa dilakukan di skrip yang lebih kompleks.
 
     for path_url in paths_to_check:
         try:
@@ -410,16 +408,18 @@ def print_results(findings):
     print("HASIL PEMINDAIAN OWASP-HUNTER1721".center(BANNER_WIDTH))
     print("="*BANNER_WIDTH)
     
-    text_wrapper = textwrap.TextWrapper(width=BANNER_WIDTH - 4) # -4 untuk prefix [-] dan spasi
+    # Menggunakan lebar yang sedikit lebih kecil untuk textwrap agar ada margin dari prefix
+    # BANNER_WIDTH (70) - 4 (untuk prefix seperti "[-] ") = 66
+    # Kita bisa coba kurangi lagi sedikit agar tidak terlalu mepet, misal 60 atau 62
+    text_wrap_width = BANNER_WIDTH - 8 # Memberi sedikit lebih banyak ruang
 
     if not findings:
         print("\n[-] Tidak ada potensi kerentanan yang ditemukan dengan cek dasar ini.")
         
         no_vuln_message = "INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam."
-        # Menggunakan textwrap untuk pesan ini
-        wrapped_lines = text_wrapper.wrap(text=no_vuln_message)
+        wrapped_lines = textwrap.wrap(text=no_vuln_message, width=text_wrap_width)
         for line in wrapped_lines:
-            print(f"[-] {line}")
+            print(f"[-] {line}") # Prefix tetap di luar textwrap untuk konsistensi
         return
         
     print(f"\n[!!!] Ditemukan {len(findings)} potensi temuan:")
@@ -442,9 +442,9 @@ def print_results(findings):
     print("\n" + "="*BANNER_WIDTH)
     
     final_message = "Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!"
-    wrapped_final_lines = text_wrapper.wrap(text=final_message)
+    wrapped_final_lines = textwrap.wrap(text=final_message, width=text_wrap_width)
     for line in wrapped_final_lines:
-        print(f"[*] {line}")
+        print(f"[*] {line}") # Prefix tetap di luar textwrap
     print("="*BANNER_WIDTH)
 
 def main():
@@ -477,7 +477,7 @@ def main():
     warning_text2 = "Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!"
     warning_text3 = "Gunakan dengan bijak & HANYA pada sistem yang berizin."
     
-    box_content_width = BANNER_WIDTH - 4 # Lebar untuk teks di dalam box, setelah dikurangi | * dan  |
+    box_content_width = BANNER_WIDTH - 4 
 
     print("\n" + "+" + "-" * (BANNER_WIDTH - 2) + "+")
     print(f"| {('* ' + warning_text1).ljust(box_content_width)} |")
