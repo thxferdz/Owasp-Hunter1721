@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import requests
+import argparse
+from urllib.parse import urlparse, urljoin, parse_qs, urlencode, urlunparse
+import urllib3
+import re
+import time # Ditambahkan untuk jeda antar modul
+import statistics # Ditambahkan untuk statistik baseline
+
+# Menonaktifkan peringatan InsecureRequestWarning
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- Konfigurasi Global ---
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OWASP-Hunter21/1.1"
+INITIAL_DEFAULT_TIMEOUT = 10 # Default awal untuk timeout, digunakan oleh argparse
+BASELINE_SAMPLES = 3 # Jumlah sampel untuk menghitung baseline waktu respons
+NETWORK_TOLERANCE = 1.0 # Toleransi detik untuk fluktuasi jaringan saat cek time-based
+
+
+# --- Database Informasi Kerentanan (Contoh) ---
+VULN_INFO = {
+    "MISSING_HSTS": {
+        "name": "Missing HSTS Header",
+        "owasp": "A05:2021 - Security Misconfiguration",
+        "cwe": "CWE-319: Cleartext Transmission of Sensitive Information",
+        "description": "Header HTTP Strict-Transport-Security (HSTS) tidak ditemukan. Ini membuat situs rentan terhadap serangan downgrade protokol dan pembajakan cookie.",
+        "remediation": "Implementasikan header HSTS pada web server Anda. Contoh: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
+        "exploitation": "Serangan Man-in-the-Middle (MITM) seperti sslstrip dapat memaksa koneksi HTTP, memungkinkan intersepsi data."
+    },
+    "MISSING_CSP": {
+        "name": "Missing Content-Security-Policy Header",
+        "owasp": "A03:2021 - Injection (khususnya untuk mitigasi XSS)",
+        "cwe": "CWE-693: Protection Mechanism Failure (jika CSP diharapkan ada dan gagal)",
+        "description": "Header Content-Security-Policy (CSP) tidak ditemukan. Ini meningkatkan risiko serangan Cross-Site Scripting (XSS) dengan mengizinkan pemuatan sumber daya dari domain mana pun.",
+        "remediation": "Terapkan CSP yang ketat untuk membatasi sumber daya (skrip, gambar, gaya, dll.) yang dapat dimuat oleh browser. Contoh: Content-Security-Policy: default-src 'self'; script-src 'self' trusted-scripts.com; object-src 'none';",
+        "exploitation": "Mempermudah serangan XSS dengan mengizinkan injeksi skrip dari sumber eksternal atau inline script yang tidak aman."
+    },
+    "SQLI_ERROR_BASIC": {
+        "name": "Potential Error-Based SQL Injection",
+        "owasp": "A03:2021 - Injection",
+        "cwe": "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+        "description": "Respons server mengindikasikan adanya error SQL saat parameter disuntik dengan payload dasar. Ini sangat mungkin menunjukkan kerentanan SQL Injection.",
+        "remediation": "Gunakan parameterized queries (prepared statements). Validasi semua input pengguna secara ketat. Gunakan ORM yang aman. Terapkan prinsip least privilege untuk akun database.",
+        "exploitation": "Gunakan tools seperti SQLMap untuk mengkonfirmasi dan mengeksploitasi. Contoh: `sqlmap -u \"URL_RENTAN_DENGAN_PAYLOAD\" --dbs --batch`. Eksploitasi manual bisa dengan menebak struktur query dan menyuntikkan perintah SQL untuk membaca, memodifikasi, atau menghapus data."
+    },
+    "XSS_REFLECTED_BASIC": {
+        "name": "Potential Reflected XSS",
+        "owasp": "A03:2021 - Injection",
+        "cwe": "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+        "description": "Payload XSS sederhana yang disuntikkan ke parameter URL tampaknya terpantul kembali di respons HTML tanpa encoding yang memadai.",
+        "remediation": "Terapkan output encoding yang kuat (sesuai konteks HTML, attribute, JavaScript, URL) pada semua data yang berasal dari pengguna sebelum ditampilkan. Gunakan Content Security Policy (CSP) sebagai lapisan pertahanan tambahan.",
+        "exploitation": "Membuat URL khusus yang berisi skrip berbahaya dan mengirimkannya ke korban (misalnya melalui email phishing atau pesan). Saat korban membuka URL, skrip akan dieksekusi di browser mereka dalam konteks domain target, memungkinkan pencurian cookie, pembajakan sesi, atau pengalihan ke situs berbahaya."
+    },
+    "SENSITIVE_FILE_GIT": {
+        "name": "Exposed .git Directory/File",
+        "owasp": "A05:2021 - Security Misconfiguration",
+        "cwe": "CWE-538: Storing Passwords in Cleartext (jika ada kredensial di repo) atau CWE-200: Exposure of Sensitive Information to an Unauthorized Actor",
+        "description": "Direktori .git atau file konfigurasi .git terekspos, memungkinkan penyerang untuk mengunduh seluruh source code, riwayat perubahan, dan potensi informasi sensitif lainnya.",
+        "remediation": "Konfigurasikan web server untuk memblokir akses ke direktori .git dan file-file di dalamnya (misalnya, melalui file .htaccess atau konfigurasi server). Pastikan .git tidak di-deploy ke server produksi.",
+        "exploitation": "Gunakan tools seperti 'git-dumper', 'GitTools', atau skrip kustom untuk mengunduh repositori. Setelah diunduh, analisis source code untuk mencari kerentanan lain atau informasi sensitif (API keys, kredensial)."
+    },
+     "SENSITIVE_FILE_ENV": {
+        "name": "Exposed .env File",
+        "owasp": "A05:2021 - Security Misconfiguration",
+        "cwe": "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor",
+        "description": "File .env yang seringkali berisi konfigurasi sensitif (kredensial database, API key, secret key aplikasi) terekspos ke publik.",
+        "remediation": "Konfigurasikan web server untuk memblokir akses ke file .env. Idealnya, file .env harus berada di luar direktori web root jika memungkinkan. Gunakan variabel lingkungan server sebagai gantinya.",
+        "exploitation": "Langsung akses URL (misal: `http://target.com/.env`) menggunakan browser atau curl untuk membaca kredensial dan konfigurasi sensitif lainnya."
+    },
+    "SERVER_HEADER": {
+        "name": "Server Header Information Leakage",
+        "owasp": "A06:2021 - Vulnerable and Outdated Components (jika versi terungkap dan rentan) / A05:2021 - Security Misconfiguration",
+        "cwe": "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor",
+        "description": "Header 'Server' pada respons HTTP mengungkapkan informasi detail mengenai jenis dan versi web server yang digunakan. Ini dapat membantu penyerang mengidentifikasi kerentanan yang diketahui pada versi tersebut.",
+        "remediation": "Sembunyikan atau ubah informasi versi pada header 'Server' melalui konfigurasi web server (misalnya, `ServerTokens Prod` di Apache, atau `server_tokens off;` di Nginx).",
+        "exploitation": "Penyerang akan menggunakan informasi versi server untuk mencari CVE (Common Vulnerabilities and Exposures) yang cocok dan eksploit yang tersedia untuk versi tersebut."
+    }
+}
+
+# --- Fungsi Utilitas ---
+def make_request_session(session, url, timeout):
+    """Membuat permintaan HTTP menggunakan objek session."""
+    try:
+        response = session.get(url, timeout=timeout, verify=False, allow_redirects=True)
+        return response
+    except requests.exceptions.Timeout:
+        print(f"[-] Permintaan timeout ke {url} ({timeout}s).")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"[-] Kesalahan permintaan ke {url}: {e}")
+        return None
+
+# --- Modul Pengecekan ---
+
+def check_security_headers(session, base_url, current_run_timeout):
+    """Mendeteksi header keamanan yang hilang."""
+    print("[*] Menjalankan: Pengecekan Header Keamanan...")
+    results = []
+    try:
+        response = make_request_session(session, base_url, timeout=current_run_timeout)
+        if not response: return results
+        
+        headers = response.headers
+        
+        if 'Strict-Transport-Security' not in headers:
+            results.append(("MISSING_HSTS", base_url))
+            
+        if 'Content-Security-Policy' not in headers and 'Content-Security-Policy-Report-Only' not in headers :
+            results.append(("MISSING_CSP", base_url))
+            
+        # Tambahkan pengecekan header lain di sini jika diinginkan
+        # Contoh: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+
+    except Exception as e: # Menangkap exception yang lebih umum
+        print(f"[-] Error saat cek header keamanan: {e}")
+    return results
+
+def check_sensitive_files(session, base_url, current_run_timeout):
+    """Mencari file/folder sensitif yang umum."""
+    print("[*] Menjalankan: Pengecekan File/Folder Sensitif...")
+    results = []
+    # Daftar path yang lebih umum dan berpotensi sensitif
+    common_paths = [
+        ".git/config", ".git/HEAD", # Git exposure
+        ".env", ".env.example", ".env.local", # Environment files
+        "admin/", "administrator/", "login.php", "admin.php", # Admin panels
+        "phpinfo.php", "test.php", "info.php", # Info/test scripts
+        "config.php.bak", "web.config.bak", "database.yml", # Backup/config files
+        "wp-config.php", # WordPress specific
+        "sites/default/settings.php", # Drupal specific
+        "app/etc/local.xml" # Magento specific
+    ] 
+    
+    for path in common_paths:
+        test_url = urljoin(base_url, path)
+        try:
+            response = make_request_session(session, test_url, timeout=current_run_timeout)
+            if not response: continue
+
+            if response.status_code == 200:
+                # Cek konten yang lebih spesifik untuk mengurangi false positive
+                if (".git/config" in path or ".git/HEAD" in path) and ("[core]" in response.text or "ref:" in response.text):
+                    results.append(("SENSITIVE_FILE_GIT", test_url))
+                elif ".env" in path and any(k in response.text for k in ["DB_PASSWORD", "APP_KEY", "SECRET_KEY", "API_KEY"]):
+                     results.append(("SENSITIVE_FILE_ENV", test_url))
+                # Tambahkan logika deteksi lain di sini jika diperlukan
+                # else:
+                # print(f" [DEBUG] Ditemukan {test_url} tapi konten tidak cocok dengan kriteria sensitif.")
+
+        except Exception: # Menangkap exception yang lebih umum
+            continue 
+    return results
+
+def check_basic_sqli_error(session, base_url, current_run_timeout):
+    """Mencoba injeksi SQL dasar pada parameter GET."""
+    print("[*] Menjalankan: Pengecekan SQLi Error-Based Dasar...")
+    results = []
+    parsed_url = urlparse(base_url)
+    params = parse_qs(parsed_url.query)
+    
+    if not params:
+        return results
+
+    sql_payloads = ["'", "\"", "`", "') OR ('1'='1", "' OR '1'='1", " UNION SELECT NULL--"] # Payload sedikit diperluas
+    sql_errors_regex = [ # Menggunakan regex untuk pencocokan yang lebih fleksibel
+        r"you have an error in your sql syntax",
+        r"warning: mysql",
+        r"unclosed quotation mark",
+        r"supplied argument is not a valid mysql",
+        r"ora-[0-9][0-9][0-9][0-9]", # Oracle errors
+        r"syntax error near",
+        r"incorrect syntax near"
+    ]
+
+    for param_name in params:
+        original_value = params[param_name][0] if params[param_name] else ""
+        for payload in sql_payloads:
+            test_params = params.copy()
+            # Pastikan param_name ada di test_params sebelum mencoba mengaksesnya
+            if param_name in test_params and test_params[param_name]:
+                 test_params[param_name] = [test_params[param_name][0] + payload]
+            else:
+                 test_params[param_name] = [payload]
+
+            test_query = urlencode(test_params, doseq=True)
+            test_url = urlunparse(parsed_url._replace(query=test_query))
+            
+            try:
+                response = make_request_session(session, test_url, timeout=current_run_timeout)
+                if not response: continue
+
+                for error_pattern in sql_errors_regex:
+                    if re.search(error_pattern, response.text, re.IGNORECASE):
+                        results.append(("SQLI_ERROR_BASIC", test_url))
+                        print(f"    [DEBUG] Pola error SQL ditemukan: {error_pattern} di {test_url}")
+                        return results # Cukup satu temuan per URL untuk modul ini
+            except Exception: # Menangkap exception yang lebih umum
+                continue
+    return results
+
+def check_basic_xss_reflected(session, base_url, current_run_timeout):
+    """Mencoba injeksi XSS Reflected dasar."""
+    print("[*] Menjalankan: Pengecekan XSS Reflected Dasar...")
+    results = []
+    parsed_url = urlparse(base_url)
+    params = parse_qs(parsed_url.query)
+
+    if not params:
+        return results
+
+    # Payload XSS yang lebih bervariasi dan umum
+    xss_payloads = [
+        '<script>alert("OWASP-Hunter21XSS")</script>',
+        '"><script>alert("OWASP-Hunter21XSS")</script>',
+        "'><script>alert('OWASP-Hunter21XSS')</script>",
+        '<img src=x onerror=alert("OWASP-Hunter21XSS")>',
+        '<svg/onload=alert("OWASP-Hunter21XSS")>'
+    ]
+    
+    for param_name in params:
+        original_value = params[param_name][0] if params[param_name] else ""
+        for payload_template in xss_payloads:
+            # Buat payload unik untuk setiap tes agar mudah dilacak jika ada WAF
+            unique_marker = str(int(time.time() * 1000))[-4:] # 4 digit terakhir dari timestamp ms
+            payload = payload_template.replace("OWASP-Hunter21XSS", f"XSS{unique_marker}")
+            
+            test_params = params.copy()
+            if param_name in test_params and test_params[param_name]:
+                test_params[param_name] = [test_params[param_name][0] + payload]
+            else:
+                test_params[param_name] = [payload]
+                
+            test_query = urlencode(test_params, doseq=True)
+            test_url = urlunparse(parsed_url._replace(query=test_query))
+
+            try:
+                response = make_request_session(session, test_url, timeout=current_run_timeout)
+                if not response: continue
+                
+                # Cek jika payload (tanpa encoding HTML yang signifikan) terpantul kembali.
+                # Ini adalah cek yang disederhanakan.
+                # Untuk XSS yang lebih andal, perlu analisis DOM atau headless browser.
+                # Kita cari bagian penting dari payload.
+                if payload in response.text: # Cek paling dasar
+                    results.append(("XSS_REFLECTED_BASIC", test_url))
+                    print(f"    [DEBUG] Payload XSS '{payload}' terpantul di {test_url}")
+                    return results # Cukup satu temuan per URL untuk modul ini
+            except Exception: # Menangkap exception yang lebih umum
+                continue
+    return results
+
+def check_server_header(session, base_url, current_run_timeout):
+    """Mendeteksi Server Header."""
+    print("[*] Menjalankan: Pengecekan Server Header...")
+    results = []
+    try:
+        response = make_request_session(session, base_url, timeout=current_run_timeout)
+        if not response: return results
+        
+        if 'Server' in response.headers:
+            server_info = response.headers['Server']
+            print(f"    [INFO] Server Header: {server_info}")
+            results.append(("SERVER_HEADER", f"{base_url} (Header: {server_info})"))
+            
+    except Exception as e: # Menangkap exception yang lebih umum
+        print(f"[-] Error saat cek server header: {e}")
+    return results
+
+# --- Engine Utama ---
+
+def run_scanner(target_url, current_run_timeout):
+    """Menjalankan semua modul pengecekan pada target."""
+    print(f"\n[+] Memulai pemindaian pada: {target_url}")
+    
+    session = requests.Session()
+    session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+    
+    all_findings = []
+    
+    # Daftar modul yang akan dijalankan
+    check_modules = [
+        check_security_headers,
+        check_sensitive_files,
+        check_server_header,
+        check_basic_sqli_error,
+        check_basic_xss_reflected,
+        # Tambahkan modul lain di sini
+    ]
+    
+    for module in check_modules:
+        # Teruskan current_run_timeout ke setiap modul
+        findings = module(session, target_url, current_run_timeout)
+        all_findings.extend(findings)
+        time.sleep(0.2) # Jeda kecil antar modul
+
+    return all_findings
+
+def print_results(findings):
+    """Mencetak hasil pemindaian."""
+    print("\n" + "="*80)
+    print("                   HASIL PEMINDAIAN OWASP-HUNTER21")
+    print("="*80)
+
+    if not findings:
+        print("\n[-] Tidak ada potensi kerentanan yang ditemukan dengan cek dasar ini.")
+        print("[-] INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam.")
+        return
+
+    print(f"\n[!!!] Ditemukan {len(findings)} potensi temuan:")
+    
+    for idx, (vuln_id, location) in enumerate(findings):
+        info = VULN_INFO.get(vuln_id)
+        if info:
+            print(f"\n--- Temuan #{idx+1} ---")
+            print(f"  [!] Nama        : {info['name']}")
+            print(f"  [!] Lokasi/Data : {location}") # Mengubah label menjadi lebih umum
+            print(f"  [!] Kategori OWASP: {info['owasp']}")
+            print(f"  [!] CWE Terkait : {info['cwe']}")
+            print(f"  [!] Deskripsi   : {info['description']}")
+            print(f"  [!] Saran Eksploitasi/Verifikasi : {info['exploitation']}")
+            print(f"  [!] Saran Remediasi : {info['remediation']}")
+        else:
+            print(f"\n--- Temuan #{idx+1} (Info Detail Tidak Tersedia) ---")
+            print(f"  [!] ID Internal : {vuln_id}")
+            print(f"  [!] Lokasi/Data : {location}")
+    
+    print("\n" + "="*80)
+    print("[*] Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!")
+    print("[*] Gunakan tools seperti OWASP ZAP, Nuclei (asli), dan SQLMap untuk analisis lebih lanjut.")
+    print("="*80)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="OWASP-Hunter21", # Nama program di --help
+        description="OWASP-Hunter21 - Prototipe Scanner Kerentanan Web Dasar (Fokus OWASP Top 10 2021).",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("url", help="URL target untuk diuji (misal: 'http://testphp.vulnweb.com/listproducts.php?cat=1')")
+    parser.add_argument("--timeout", type=int, default=INITIAL_DEFAULT_TIMEOUT, 
+                        help=f"Timeout HTTP (detik) untuk setiap permintaan (default: {INITIAL_DEFAULT_TIMEOUT})")
+    # Tambahkan argumen lain jika perlu (user-agent, dll.)
+    
+    args = parser.parse_args()
+
+    # Nilai timeout yang akan digunakan di seluruh skrip berasal dari args.timeout
+    current_run_timeout = args.timeout
+
+    # Menggunakan banner yang sudah disepakati
+    print("""
+********************************************************************
+* OWASP-Hunter21 v1.1                          *
+* Basic OWASP Top 10 2021 Vulnerability Scanner             *
+* *
+* !! PERINGATAN: HANYA UNTUK TUJUAN EDUKASI & SAH !!        *
+********************************************************************
+""")
+    print("\nPERINGATAN SANGAT PENTING:")
+    print("ALAT INI ADALAH PROTOTIPE DASAR DAN TIDAK MENJAMIN AKURASI 100%.")
+    print("HASILNYA HANYA INDIKASI AWAL. SELALU LAKUKAN VERIFIKASI MANUAL!")
+    print("GUNAKAN DENGAN BIJAK DAN HANYA PADA SISTEM YANG ANDA MILIKI IZIN UNTUK MENGUJINYA.\n")
+
+
+    if not urlparse(args.url).scheme:
+        print("[-] Error: URL harus menyertakan skema (http:// atau https://)")
+        return
+
+    findings = run_scanner(args.url, current_run_timeout) # Teruskan timeout ke run_scanner
+    print_results(findings)
+
+if __name__ == "__main__":
+    main()
