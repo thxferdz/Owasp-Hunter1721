@@ -15,9 +15,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Konfigurasi Global ---
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OWASP-Hunter1721/1.1"
 INITIAL_DEFAULT_TIMEOUT = 10
-BASELINE_SAMPLES = 3 # Untuk time-based jika diimplementasikan
-NETWORK_TOLERANCE = 1.0 # Untuk time-based jika diimplementasikan
-BANNER_WIDTH = 70 # Lebar banner dan kotak peringatan
+BASELINE_SAMPLES = 3 
+NETWORK_TOLERANCE = 1.0 
+BANNER_WIDTH = 70 
 
 # --- Database Informasi Kerentanan ---
 VULN_INFO = {
@@ -48,7 +48,7 @@ VULN_INFO = {
     "INSECURE_COOKIE_NO_HTTPONLY_FLAG": {
         "name": "Cookie Without HttpOnly Flag",
         "owasp": "A03:2021 - Injection (XSS context) / A07:2017 - Cross-Site Scripting (XSS)",
-        "cwe": "CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag (More accurately, facilitates XSS impact)",
+        "cwe": "CWE-1004: Sensitive Cookie Without 'HttpOnly' Flag",
         "description": "Cookie tidak memiliki flag 'HttpOnly', membuatnya bisa diakses oleh JavaScript sisi klien, meningkatkan risiko pencurian cookie melalui XSS.",
         "remediation": "Tambahkan flag 'HttpOnly' pada semua cookie yang tidak perlu diakses oleh JavaScript.",
         "exploitation": "Jika kerentanan XSS ditemukan, penyerang dapat menggunakan JavaScript untuk mencuri cookie ini."
@@ -85,6 +85,22 @@ VULN_INFO = {
         "remediation": "Set header X-Content-Type-Options: nosniff.",
         "exploitation": "Memanfaatkan MIME-sniffing browser untuk mengeksekusi skrip yang diunggah sebagai tipe file lain."
     },
+    "MISSING_REFERRER_POLICY": {
+        "name": "Missing or Weak Referrer-Policy Header",
+        "owasp": "A05:2021 - Security Misconfiguration / A03:2017 - Sensitive Data Exposure",
+        "cwe": "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor (jika URL referrer mengandung data sensitif)",
+        "description": "Header Referrer-Policy tidak ada atau diset ke nilai yang lemah, berpotensi membocorkan informasi sensitif melalui URL referrer ke situs pihak ketiga.",
+        "remediation": "Implementasikan Referrer-Policy yang lebih ketat, seperti 'strict-origin-when-cross-origin', 'no-referrer-when-downgrade', atau 'no-referrer'.",
+        "exploitation": "Mengumpulkan informasi sensitif dari URL referrer yang dikirim ke situs eksternal."
+    },
+    "MISSING_PERMISSIONS_POLICY": {
+        "name": "Missing Permissions-Policy Header",
+        "owasp": "A05:2021 - Security Misconfiguration",
+        "cwe": "CWE-693: Protection Mechanism Failure",
+        "description": "Header Permissions-Policy (sebelumnya Feature-Policy) tidak ada. Ini memungkinkan halaman menggunakan fitur browser yang berpotensi sensitif (kamera, mikrofon, geolokasi) tanpa batasan eksplisit.",
+        "remediation": "Implementasikan Permissions-Policy untuk membatasi fitur browser yang dapat digunakan oleh halaman dan iframe. Contoh: Permissions-Policy: geolocation=(), camera=(), microphone=()",
+        "exploitation": "Penyalahgunaan fitur browser oleh skrip pihak ketiga atau iframe yang tidak dipercaya."
+    },
     "SQLI_ERROR_BASIC": {
         "name": "Potential Error-Based SQL Injection",
         "owasp": "A03:2021 - Injection / A01:2017 - Injection",
@@ -117,6 +133,14 @@ VULN_INFO = {
         "remediation": "Blokir akses ke file .env dan letakkan di luar web root.",
         "exploitation": "Langsung akses URL untuk membaca kredensial."
     },
+    "DIRECTORY_LISTING_ENABLED": {
+        "name": "Directory Listing Enabled",
+        "owasp": "A05:2021 - Security Misconfiguration / A06:2017 - Security Misconfiguration",
+        "cwe": "CWE-548: Exposure of Information Through Directory Listing",
+        "description": "Server mengizinkan listing isi direktori, yang dapat membocorkan struktur file dan file sensitif yang tidak terduga.",
+        "remediation": "Nonaktifkan directory listing di konfigurasi web server (misalnya, 'Options -Indexes' di Apache).",
+        "exploitation": "Penyerang dapat menjelajahi struktur direktori untuk menemukan file atau informasi yang tidak dimaksudkan untuk publik."
+    },
     "SERVER_HEADER": {
         "name": "Server Header Information Leakage",
         "owasp": "A06:2021 - Vulnerable and Outdated Components / A09:2017 - Using Components with Known Vulnerabilities",
@@ -127,7 +151,7 @@ VULN_INFO = {
     },
     "OPEN_REDIRECT_BASIC": {
         "name": "Potential Open Redirect",
-        "owasp": "A01:2021 - Broken Access Control / A01:2017 - Injection (Bisa disalahgunakan dalam konteks phishing atau bypass validasi)",
+        "owasp": "A01:2021 - Broken Access Control (jika mem-bypass pemeriksaan tertentu) / A01:2017 - Injection (jika parameter redirect disuntikkan)",
         "cwe": "CWE-601: URL Redirection to Untrusted Site ('Open Redirect')",
         "description": "Situs mungkin mengalihkan pengguna ke domain eksternal yang tidak divalidasi, berisiko untuk phishing.",
         "remediation": "Validasi semua URL redirect untuk memastikan hanya mengarah ke domain yang diizinkan, atau tampilkan halaman peringatan.",
@@ -152,12 +176,10 @@ def check_https_enforcement(session, base_url, current_run_timeout):
     results = []
     parsed_base = urlparse(base_url)
     try:
-        # Cek jika URL awal adalah HTTP
         if parsed_base.scheme == 'http':
             response = make_request_session(session, base_url, timeout=current_run_timeout, allow_redirects=True)
-            if response and response.url.startswith('http://'): # Jika setelah redirect tetap HTTP
+            if response and response.url.startswith('http://'): 
                 results.append(("NO_HTTPS", base_url))
-        # Cek juga jika URL awal HTTPS, apakah ada form ke HTTP (dilakukan di check_http_forms)
     except Exception as e:
         print(f"[-] Error saat cek HTTPS: {e}")
     return results
@@ -169,8 +191,6 @@ def check_http_forms(session, base_url, current_run_timeout):
     try:
         response = make_request_session(session, base_url, timeout=current_run_timeout)
         if not response: return results
-
-        # Regex sederhana untuk mencari form action. Untuk HTML kompleks, BeautifulSoup lebih baik.
         forms = re.findall(r'<form[^>]+action\s*=\s*["\']([^"\']+)["\']', response.text, re.IGNORECASE)
         for form_action in forms:
             absolute_form_action = urljoin(base_url, form_action)
@@ -185,27 +205,24 @@ def check_cookie_attributes(session, base_url, current_run_timeout):
     print("[*] Menjalankan: Pengecekan Atribut Cookie...")
     results = []
     try:
+        # Lakukan request awal untuk mendapatkan cookie jika belum ada di session
         response = make_request_session(session, base_url, timeout=current_run_timeout)
         if not response: return results
 
-        for cookie in session.cookies: # Menggunakan session.cookies setelah request
+        for cookie in session.cookies: 
             if urlparse(base_url).scheme == 'https' and not cookie.secure:
                 results.append(("INSECURE_COOKIE_NO_SECURE_FLAG", f"Cookie: {cookie.name} (domain: {cookie.domain})"))
-            if not cookie.has_nonstandard_attr('HttpOnly') and not getattr(cookie, 'httponly', False) : # Cek HttpOnly
-                 # Cara cek HttpOnly bisa bervariasi antar versi requests/implementasi CookieJar
-                 # Alternatif: if 'httponly' not in (cookie._rest if hasattr(cookie,'_rest') else {}):
-                is_httponly = False
-                if hasattr(cookie, '_rest'): # Untuk SimpleCookie
-                    if 'httponly' in cookie._rest:
-                        is_httponly = True
-                elif hasattr(cookie, 'get_nonstandard_attr'): # Untuk beberapa implementasi lain
-                    if cookie.get_nonstandard_attr('httponly') is not None:
-                         is_httponly = True
-                elif hasattr(cookie, 'httponly'): # atribut langsung
-                    is_httponly = cookie.httponly
-
-                if not is_httponly:
-                    results.append(("INSECURE_COOKIE_NO_HTTPONLY_FLAG", f"Cookie: {cookie.name} (domain: {cookie.domain})"))
+            
+            is_httponly = False
+            if hasattr(cookie, 'get_nonstandard_attr'): # Metode yang lebih umum
+                is_httponly = cookie.get_nonstandard_attr('httponly') is not None
+            elif hasattr(cookie, '_rest') and 'httponly' in cookie._rest: # Untuk SimpleCookie
+                is_httponly = True
+            elif hasattr(cookie, 'httponly'): # Atribut langsung
+                is_httponly = cookie.httponly
+            
+            if not is_httponly:
+                results.append(("INSECURE_COOKIE_NO_HTTPONLY_FLAG", f"Cookie: {cookie.name} (domain: {cookie.domain})"))
     except Exception as e:
         print(f"[-] Error saat cek atribut cookie: {e}")
     return results
@@ -217,33 +234,77 @@ def check_security_headers(session, base_url, current_run_timeout):
     try:
         response = make_request_session(session, base_url, timeout=current_run_timeout)
         if not response: return results
-        headers = {h.lower(): v for h, v in response.headers.items()} # Case-insensitive
+        headers = {h.lower(): v for h, v in response.headers.items()} 
         
         if 'strict-transport-security' not in headers: results.append(("MISSING_HSTS", base_url))
         if 'content-security-policy' not in headers and 'content-security-policy-report-only' not in headers: results.append(("MISSING_CSP", base_url))
-        if 'x-frame-options' not in headers:
-            # Jika X-Frame-Options tidak ada, cek apakah ada CSP frame-ancestors
+        
+        # Cek X-Frame-Options atau CSP frame-ancestors
+        has_clickjacking_protection = False
+        if 'x-frame-options' in headers:
+            has_clickjacking_protection = True
+        else:
             csp_header = headers.get('content-security-policy', '')
-            if 'frame-ancestors' not in csp_header.lower():
-                results.append(("MISSING_X_FRAME", base_url))
+            if 'frame-ancestors' in csp_header.lower():
+                has_clickjacking_protection = True
+        if not has_clickjacking_protection:
+            results.append(("MISSING_X_FRAME", base_url))
+            
         if 'x-content-type-options' not in headers:
             results.append(("MISSING_X_CONTENT_TYPE_OPTIONS", base_url))
+        if 'referrer-policy' not in headers: # Cek baru
+            results.append(("MISSING_REFERRER_POLICY", base_url))
+        if 'permissions-policy' not in headers and 'feature-policy' not in headers: # Cek baru
+            results.append(("MISSING_PERMISSIONS_POLICY", base_url))
             
     except Exception as e: print(f"[-] Error saat cek header: {e}")
+    return results
+
+def check_directory_listing(session, base_url, current_run_timeout):
+    """Mengecek potensi directory listing."""
+    print("[*] Menjalankan: Pengecekan Directory Listing...")
+    results = []
+    # Coba akses path dasar, lalu beberapa sub-path umum jika ada
+    # Untuk kesederhanaan, kita hanya cek base_url dan beberapa variasi umum
+    # Dalam skenario nyata, ini akan memerlukan spidering.
+    paths_to_check = [base_url]
+    # Tambahkan path umum yang mungkin memiliki listing jika base_url adalah domain root
+    # parsed_target = urlparse(base_url)
+    # if not parsed_target.path or parsed_target.path == '/':
+    #     paths_to_check.extend([urljoin(base_url, p) for p in ["css/", "js/", "images/"]])
+
+    for path_url in paths_to_check:
+        try:
+            response = make_request_session(session, path_url, timeout=current_run_timeout)
+            if response and response.status_code == 200:
+                # Pola umum pada halaman directory listing
+                dir_listing_patterns = [
+                    r"<title>Index of /.*</title>",
+                    r"<h1>Index of /.*</h1>",
+                    r"Parent Directory</a>",
+                    r"To Parent Directory</a>"
+                ]
+                if any(re.search(pattern, response.text, re.IGNORECASE) for pattern in dir_listing_patterns):
+                    results.append(("DIRECTORY_LISTING_ENABLED", path_url))
+                    # Tidak perlu return results di sini, mungkin ada di path lain
+        except Exception as e:
+            print(f"[-] Error saat cek directory listing di {path_url}: {e}")
+            continue
     return results
 
 def check_sensitive_files(session, base_url, current_run_timeout):
     """Mencari file/folder sensitif."""
     print("[*] Menjalankan: Pengecekan File/Folder Sensitif...")
     results = []
-    common_paths = [".git/config", ".git/HEAD", ".env", ".env.local", "admin/", "phpinfo.php", "config.php.bak", "web.config.bak"]
+    common_paths = [".git/config", ".git/HEAD", ".env", ".env.local", "admin/", "phpinfo.php", "config.php.bak", "web.config.bak", "backup.zip", "site.tar.gz"]
     for path in common_paths:
         test_url = urljoin(base_url, path)
         try:
             response = make_request_session(session, test_url, timeout=current_run_timeout)
             if response and response.status_code == 200:
                 if (".git/" in path) and ("[core]" in response.text or "ref:" in response.text): results.append(("SENSITIVE_FILE_GIT", test_url))
-                elif (".env" in path) and any(k in response.text for k in ["PASSWORD", "APP_KEY", "SECRET"]): results.append(("SENSITIVE_FILE_ENV", test_url))
+                elif (".env" in path) and any(k in response.text for k in ["PASSWORD", "APP_KEY", "SECRET", "API_KEY"]): results.append(("SENSITIVE_FILE_ENV", test_url))
+                # Tambahkan deteksi untuk backup.zip atau .tar.gz jika content-type sesuai atau ukuran signifikan
         except Exception: continue
     return results
 
@@ -254,8 +315,8 @@ def check_basic_sqli_error(session, base_url, current_run_timeout):
     parsed_url = urlparse(base_url)
     params = parse_qs(parsed_url.query)
     if not params: return results
-    sql_payloads = ["'", "\"", "' OR '1'='1", " UNION SELECT NULL--"]
-    sql_errors_regex = [r"you have an error in your sql syntax", r"warning: mysql", r"unclosed quotation mark", r"ora-[0-9]{4,}", r"incorrect syntax near"]
+    sql_payloads = ["'", "\"", "`", "' OR '1'='1", " UNION SELECT NULL--", " AND 1=1", " AND 1=0"]
+    sql_errors_regex = [r"you have an error in your sql syntax", r"warning: mysql", r"unclosed quotation mark", r"ora-[0-9]{4,}", r"incorrect syntax near", r"SQL command not properly ended"]
     for param_name in params:
         original_value = params[param_name][0] if params[param_name] else ""
         for payload in sql_payloads:
@@ -277,17 +338,18 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
     parsed_url = urlparse(base_url)
     params = parse_qs(parsed_url.query)
     if not params: return results
-    xss_payload_template = '<script>alert("Hunter1721XSS{}")</script>'
+    xss_payload_template = '<ScRiPt>alert("Hunter1721XSS{}")</ScRiPt>' # Case-insensitive tag
     for param_name in params:
         original_value = params[param_name][0] if params[param_name] else ""
-        unique_marker = str(int(time.time() * 1000))[-3:] # Membuat payload sedikit unik
+        unique_marker = str(int(time.time() * 1000))[-3:] 
         xss_payload = xss_payload_template.format(unique_marker)
         test_params = params.copy()
         test_params[param_name] = [original_value + xss_payload]
         test_url = urlunparse(parsed_url._replace(query=urlencode(test_params, doseq=True)))
         try:
             response = make_request_session(session, test_url, timeout=current_run_timeout)
-            if response and xss_payload in response.text:
+            # Cari payload dengan case-insensitive karena kita menyuntikkannya seperti itu
+            if response and re.search(re.escape(xss_payload), response.text, re.IGNORECASE):
                 results.append(("XSS_REFLECTED_BASIC", test_url))
                 return results
         except Exception: continue
@@ -312,9 +374,9 @@ def check_open_redirect(session, base_url, current_run_timeout):
     parsed_url = urlparse(base_url)
     params = parse_qs(parsed_url.query)
     if not params: return results
-    redirect_payload = "https://evil.example.com/hunter1721" # Payload yang lebih unik
+    redirect_payload = "https://evil.example.com/hunter1721" 
     for param_name in params:
-        if any(p in param_name.lower() for p in ['url', 'redirect', 'next', 'goto', 'dest', 'target', 'return_to', 'rurl']):
+        if any(p in param_name.lower() for p in ['url', 'redirect', 'next', 'goto', 'dest', 'target', 'return_to', 'rurl', 'return', 'q', 'u']):
             original_value = params[param_name][0] if params[param_name] else ""
             test_params = params.copy()
             test_params[param_name] = [redirect_payload]
@@ -322,7 +384,7 @@ def check_open_redirect(session, base_url, current_run_timeout):
             try:
                 response = make_request_session(session, test_url, timeout=current_run_timeout, allow_redirects=False)
                 if response and response.status_code in [301, 302, 303, 307, 308] and 'Location' in response.headers:
-                    if redirect_payload in response.headers['Location']:
+                    if redirect_payload in response.headers['Location'] or urlparse(response.headers['Location']).netloc == urlparse(redirect_payload).netloc:
                         results.append(("OPEN_REDIRECT_BASIC", test_url))
                         return results
             except Exception: continue
@@ -341,6 +403,7 @@ def run_scanner(target_url, current_run_timeout):
         check_http_forms,
         check_cookie_attributes,
         check_security_headers,
+        check_directory_listing, # Modul baru ditambahkan
         check_sensitive_files,
         check_server_header,
         check_basic_sqli_error,
@@ -355,7 +418,7 @@ def run_scanner(target_url, current_run_timeout):
 
 def print_results(findings):
     """Mencetak hasil pemindaian."""
-    print("\n" + "="*BANNER_WIDTH) # Menggunakan BANNER_WIDTH untuk konsistensi
+    print("\n" + "="*BANNER_WIDTH) 
     print("HASIL PEMINDAIAN OWASP-HUNTER1721".center(BANNER_WIDTH))
     print("="*BANNER_WIDTH)
     if not findings:
@@ -411,7 +474,8 @@ def main():
     warning_text1 = "Alat ini adalah prototipe dasar & TIDAK MENJAMIN AKURASI 100%."
     warning_text2 = "Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!"
     warning_text3 = "Gunakan dengan bijak & HANYA pada sistem yang berizin."
-    box_content_width = BANNER_WIDTH - 4 # Lebar isi konten di dalam box
+    # Lebar konten di dalam box, dikurangi 2 untuk '|' dan 2 untuk spasi '* '
+    box_content_width = BANNER_WIDTH - 4 
 
     print("\n" + "+" + "-" * (BANNER_WIDTH - 2) + "+")
     print(f"| {('* ' + warning_text1).ljust(box_content_width)} |")
