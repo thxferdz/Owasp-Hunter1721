@@ -408,18 +408,34 @@ def print_results(findings):
     print("HASIL PEMINDAIAN OWASP-HUNTER1721".center(BANNER_WIDTH))
     print("="*BANNER_WIDTH)
     
-    # Menggunakan lebar yang sedikit lebih kecil untuk textwrap agar ada margin dari prefix
-    # BANNER_WIDTH (70) - 4 (untuk prefix seperti "[-] ") = 66
-    # Kita bisa coba kurangi lagi sedikit agar tidak terlalu mepet, misal 60 atau 62
-    text_wrap_width = BANNER_WIDTH - 8 # Memberi sedikit lebih banyak ruang
+    # Lebar untuk textwrap disesuaikan agar teks tidak terlalu mepet dengan prefix
+    # BANNER_WIDTH (70). Prefix seperti "[-] " adalah 4 karakter.
+    # text_wrap_width = BANNER_WIDTH - 4 akan membuat teks mengisi sisa ruang.
+    # Jika ingin lebih banyak margin, bisa dikurangi lagi.
+    # Misal, BANNER_WIDTH - 6 atau BANNER_WIDTH - 8
+    text_wrap_width_for_messages = BANNER_WIDTH - 4 # Lebar maksimal untuk teks setelah prefix
 
     if not findings:
-        print("\n[-] Tidak ada potensi kerentanan yang ditemukan dengan cek dasar ini.")
+        print("\n") # Tambah baris baru untuk pemisah
+        no_vuln_message = "[-] INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam."
+        # Menggunakan TextWrapper untuk indentasi yang lebih baik
+        wrapper = textwrap.TextWrapper(width=BANNER_WIDTH, 
+                                       initial_indent="", # Tidak ada indent awal, prefix ditangani manual
+                                       subsequent_indent="    ", # Indent untuk baris lanjutan
+                                       replace_whitespace=False, 
+                                       drop_whitespace=True)
+        # Membungkus teks tanpa prefix terlebih dahulu
+        message_only = "INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam."
+        wrapped_message_lines = wrapper.wrap(message_only)
         
-        no_vuln_message = "INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam."
-        wrapped_lines = textwrap.wrap(text=no_vuln_message, width=text_wrap_width)
-        for line in wrapped_lines:
-            print(f"[-] {line}") # Prefix tetap di luar textwrap untuk konsistensi
+        # Mencetak baris pertama dengan prefix, baris selanjutnya dengan indentasi
+        if wrapped_message_lines:
+            print(f"[-] {wrapped_message_lines[0]}")
+            for line in wrapped_message_lines[1:]:
+                print(line) # wrapper sudah menangani indentasi lanjutan
+        else: # Jika pesan sangat pendek dan tidak terbungkus
+             print(no_vuln_message)
+
         return
         
     print(f"\n[!!!] Ditemukan {len(findings)} potensi temuan:")
@@ -441,10 +457,22 @@ def print_results(findings):
             
     print("\n" + "="*BANNER_WIDTH)
     
-    final_message = "Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!"
-    wrapped_final_lines = textwrap.wrap(text=final_message, width=text_wrap_width)
-    for line in wrapped_final_lines:
-        print(f"[*] {line}") # Prefix tetap di luar textwrap
+    final_message_text = "Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!"
+    final_wrapper = textwrap.TextWrapper(width=BANNER_WIDTH,
+                                         initial_indent="", 
+                                         subsequent_indent="    ",
+                                         replace_whitespace=False,
+                                         drop_whitespace=True)
+    message_only_final = "Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!"
+    wrapped_final_lines = final_wrapper.wrap(message_only_final)
+
+    if wrapped_final_lines:
+        print(f"[*] {wrapped_final_lines[0]}")
+        for line in wrapped_final_lines[1:]:
+            print(line)
+    else:
+        print(f"[*] {message_only_final}")
+        
     print("="*BANNER_WIDTH)
 
 def main():
