@@ -328,7 +328,8 @@ def print_results(findings):
     
     print("\n" + "="*80)
     print("[*] Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!")
-    print("[*] Gunakan tools seperti OWASP ZAP, Nuclei (asli), dan SQLMap untuk analisis lebih lanjut.")
+    # Baris berikut telah dihapus sesuai permintaan:
+    # print("[*] Gunakan tools seperti OWASP ZAP, Nuclei (asli), dan SQLMap untuk analisis lebih lanjut.")
     print("="*80)
 
 
