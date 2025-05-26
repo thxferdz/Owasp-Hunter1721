@@ -110,10 +110,7 @@ def check_security_headers(session, base_url, current_run_timeout):
         if 'Content-Security-Policy' not in headers and 'Content-Security-Policy-Report-Only' not in headers :
             results.append(("MISSING_CSP", base_url))
             
-        # Tambahkan pengecekan header lain di sini jika diinginkan
-        # Contoh: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
-
-    except Exception as e: # Menangkap exception yang lebih umum
+    except Exception as e: 
         print(f"[-] Error saat cek header keamanan: {e}")
     return results
 
@@ -121,16 +118,12 @@ def check_sensitive_files(session, base_url, current_run_timeout):
     """Mencari file/folder sensitif yang umum."""
     print("[*] Menjalankan: Pengecekan File/Folder Sensitif...")
     results = []
-    # Daftar path yang lebih umum dan berpotensi sensitif
     common_paths = [
-        ".git/config", ".git/HEAD", # Git exposure
-        ".env", ".env.example", ".env.local", # Environment files
-        "admin/", "administrator/", "login.php", "admin.php", # Admin panels
-        "phpinfo.php", "test.php", "info.php", # Info/test scripts
-        "config.php.bak", "web.config.bak", "database.yml", # Backup/config files
-        "wp-config.php", # WordPress specific
-        "sites/default/settings.php", # Drupal specific
-        "app/etc/local.xml" # Magento specific
+        ".git/config", ".git/HEAD", ".env", ".env.example", ".env.local", 
+        "admin/", "administrator/", "login.php", "admin.php", "phpinfo.php", 
+        "test.php", "info.php", "config.php.bak", "web.config.bak", 
+        "database.yml", "wp-config.php", "sites/default/settings.php", 
+        "app/etc/local.xml"
     ] 
     
     for path in common_paths:
@@ -140,16 +133,12 @@ def check_sensitive_files(session, base_url, current_run_timeout):
             if not response: continue
 
             if response.status_code == 200:
-                # Cek konten yang lebih spesifik untuk mengurangi false positive
                 if (".git/config" in path or ".git/HEAD" in path) and ("[core]" in response.text or "ref:" in response.text):
                     results.append(("SENSITIVE_FILE_GIT", test_url))
                 elif ".env" in path and any(k in response.text for k in ["DB_PASSWORD", "APP_KEY", "SECRET_KEY", "API_KEY"]):
                      results.append(("SENSITIVE_FILE_ENV", test_url))
-                # Tambahkan logika deteksi lain di sini jika diperlukan
-                # else:
-                # print(f" [DEBUG] Ditemukan {test_url} tapi konten tidak cocok dengan kriteria sensitif.")
 
-        except Exception: # Menangkap exception yang lebih umum
+        except Exception:
             continue 
     return results
 
@@ -163,22 +152,17 @@ def check_basic_sqli_error(session, base_url, current_run_timeout):
     if not params:
         return results
 
-    sql_payloads = ["'", "\"", "`", "') OR ('1'='1", "' OR '1'='1", " UNION SELECT NULL--"] # Payload sedikit diperluas
-    sql_errors_regex = [ # Menggunakan regex untuk pencocokan yang lebih fleksibel
-        r"you have an error in your sql syntax",
-        r"warning: mysql",
-        r"unclosed quotation mark",
-        r"supplied argument is not a valid mysql",
-        r"ora-[0-9][0-9][0-9][0-9]", # Oracle errors
-        r"syntax error near",
-        r"incorrect syntax near"
+    sql_payloads = ["'", "\"", "`", "') OR ('1'='1", "' OR '1'='1", " UNION SELECT NULL--"]
+    sql_errors_regex = [
+        r"you have an error in your sql syntax", r"warning: mysql", r"unclosed quotation mark",
+        r"supplied argument is not a valid mysql", r"ora-[0-9][0-9][0-9][0-9]",
+        r"syntax error near", r"incorrect syntax near"
     ]
 
     for param_name in params:
         original_value = params[param_name][0] if params[param_name] else ""
         for payload in sql_payloads:
             test_params = params.copy()
-            # Pastikan param_name ada di test_params sebelum mencoba mengaksesnya
             if param_name in test_params and test_params[param_name]:
                  test_params[param_name] = [test_params[param_name][0] + payload]
             else:
@@ -195,8 +179,8 @@ def check_basic_sqli_error(session, base_url, current_run_timeout):
                     if re.search(error_pattern, response.text, re.IGNORECASE):
                         results.append(("SQLI_ERROR_BASIC", test_url))
                         print(f"    [DEBUG] Pola error SQL ditemukan: {error_pattern} di {test_url}")
-                        return results # Cukup satu temuan per URL untuk modul ini
-            except Exception: # Menangkap exception yang lebih umum
+                        return results
+            except Exception:
                 continue
     return results
 
@@ -210,7 +194,6 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
     if not params:
         return results
 
-    # Payload XSS yang lebih bervariasi dan umum
     xss_payloads = [
         '<script>alert("OWASP-Hunter21XSS")</script>',
         '"><script>alert("OWASP-Hunter21XSS")</script>',
@@ -222,8 +205,7 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
     for param_name in params:
         original_value = params[param_name][0] if params[param_name] else ""
         for payload_template in xss_payloads:
-            # Buat payload unik untuk setiap tes agar mudah dilacak jika ada WAF
-            unique_marker = str(int(time.time() * 1000))[-4:] # 4 digit terakhir dari timestamp ms
+            unique_marker = str(int(time.time() * 1000))[-4:]
             payload = payload_template.replace("OWASP-Hunter21XSS", f"XSS{unique_marker}")
             
             test_params = params.copy()
@@ -239,15 +221,11 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
                 response = make_request_session(session, test_url, timeout=current_run_timeout)
                 if not response: continue
                 
-                # Cek jika payload (tanpa encoding HTML yang signifikan) terpantul kembali.
-                # Ini adalah cek yang disederhanakan.
-                # Untuk XSS yang lebih andal, perlu analisis DOM atau headless browser.
-                # Kita cari bagian penting dari payload.
-                if payload in response.text: # Cek paling dasar
+                if payload in response.text: 
                     results.append(("XSS_REFLECTED_BASIC", test_url))
                     print(f"    [DEBUG] Payload XSS '{payload}' terpantul di {test_url}")
-                    return results # Cukup satu temuan per URL untuk modul ini
-            except Exception: # Menangkap exception yang lebih umum
+                    return results
+            except Exception:
                 continue
     return results
 
@@ -264,7 +242,7 @@ def check_server_header(session, base_url, current_run_timeout):
             print(f"    [INFO] Server Header: {server_info}")
             results.append(("SERVER_HEADER", f"{base_url} (Header: {server_info})"))
             
-    except Exception as e: # Menangkap exception yang lebih umum
+    except Exception as e: 
         print(f"[-] Error saat cek server header: {e}")
     return results
 
@@ -279,21 +257,18 @@ def run_scanner(target_url, current_run_timeout):
     
     all_findings = []
     
-    # Daftar modul yang akan dijalankan
     check_modules = [
         check_security_headers,
         check_sensitive_files,
         check_server_header,
         check_basic_sqli_error,
         check_basic_xss_reflected,
-        # Tambahkan modul lain di sini
     ]
     
     for module in check_modules:
-        # Teruskan current_run_timeout ke setiap modul
         findings = module(session, target_url, current_run_timeout)
         all_findings.extend(findings)
-        time.sleep(0.2) # Jeda kecil antar modul
+        time.sleep(0.2) 
 
     return all_findings
 
@@ -315,7 +290,7 @@ def print_results(findings):
         if info:
             print(f"\n--- Temuan #{idx+1} ---")
             print(f"  [!] Nama        : {info['name']}")
-            print(f"  [!] Lokasi/Data : {location}") # Mengubah label menjadi lebih umum
+            print(f"  [!] Lokasi/Data : {location}")
             print(f"  [!] Kategori OWASP: {info['owasp']}")
             print(f"  [!] CWE Terkait : {info['cwe']}")
             print(f"  [!] Deskripsi   : {info['description']}")
@@ -328,28 +303,22 @@ def print_results(findings):
     
     print("\n" + "="*80)
     print("[*] Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!")
-    # Baris berikut telah dihapus sesuai permintaan:
-    # print("[*] Gunakan tools seperti OWASP ZAP, Nuclei (asli), dan SQLMap untuk analisis lebih lanjut.")
     print("="*80)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="OWASP-Hunter21", # Nama program di --help
+        prog="OWASP-Hunter21", 
         description="OWASP-Hunter21 - Prototipe Scanner Kerentanan Web Dasar (Fokus OWASP Top 10 2021).",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("url", help="URL target untuk diuji (misal: 'http://testphp.vulnweb.com/listproducts.php?cat=1')")
+    parser.add_argument("url", help="URL target untuk diuji")
     parser.add_argument("--timeout", type=int, default=INITIAL_DEFAULT_TIMEOUT, 
-                        help=f"Timeout HTTP (detik) untuk setiap permintaan (default: {INITIAL_DEFAULT_TIMEOUT})")
-    # Tambahkan argumen lain jika perlu (user-agent, dll.)
+                        help=f"Timeout HTTP (detik) (default: {INITIAL_DEFAULT_TIMEOUT})")
     
     args = parser.parse_args()
-
-    # Nilai timeout yang akan digunakan di seluruh skrip berasal dari args.timeout
     current_run_timeout = args.timeout
 
-    # Menggunakan banner yang sudah disepakati
     print("""
 ********************************************************************
 * OWASP-Hunter21 v1.1                          *
@@ -358,17 +327,23 @@ def main():
 * !! PERINGATAN: HANYA UNTUK TUJUAN EDUKASI & SAH !!        *
 ********************************************************************
 """)
-    print("\nPERINGATAN SANGAT PENTING:")
-    print("ALAT INI ADALAH PROTOTIPE DASAR DAN TIDAK MENJAMIN AKURASI 100%.")
-    print("HASILNYA HANYA INDIKASI AWAL. SELALU LAKUKAN VERIFIKASI MANUAL!")
-    print("GUNAKAN DENGAN BIJAK DAN HANYA PADA SISTEM YANG ANDA MILIKI IZIN UNTUK MENGUJINYA.\n")
 
+    # Peringatan yang dirapikan
+    print("""
++------------------------------------------------------------------+
+| PERINGATAN SANGAT PENTING:                                       |
+|                                                                  |
+| * Alat ini adalah prototipe dasar & TIDAK MENJAMIN AKURASI 100%. |
+| * Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!|
+| * Gunakan dengan bijak & HANYA pada sistem yang berizin.         |
++------------------------------------------------------------------+
+""")
 
     if not urlparse(args.url).scheme:
         print("[-] Error: URL harus menyertakan skema (http:// atau https://)")
         return
 
-    findings = run_scanner(args.url, current_run_timeout) # Teruskan timeout ke run_scanner
+    findings = run_scanner(args.url, current_run_timeout)
     print_results(findings)
 
 if __name__ == "__main__":
