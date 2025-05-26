@@ -8,6 +8,7 @@ import urllib3
 import re
 import time
 import statistics
+import textwrap # Modul untuk word wrapping
 
 # Menonaktifkan peringatan InsecureRequestWarning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -205,7 +206,6 @@ def check_cookie_attributes(session, base_url, current_run_timeout):
     print("[*] Menjalankan: Pengecekan Atribut Cookie...")
     results = []
     try:
-        # Lakukan request awal untuk mendapatkan cookie jika belum ada di session
         response = make_request_session(session, base_url, timeout=current_run_timeout)
         if not response: return results
 
@@ -214,11 +214,11 @@ def check_cookie_attributes(session, base_url, current_run_timeout):
                 results.append(("INSECURE_COOKIE_NO_SECURE_FLAG", f"Cookie: {cookie.name} (domain: {cookie.domain})"))
             
             is_httponly = False
-            if hasattr(cookie, 'get_nonstandard_attr'): # Metode yang lebih umum
+            if hasattr(cookie, 'get_nonstandard_attr'):
                 is_httponly = cookie.get_nonstandard_attr('httponly') is not None
-            elif hasattr(cookie, '_rest') and 'httponly' in cookie._rest: # Untuk SimpleCookie
+            elif hasattr(cookie, '_rest') and 'httponly' in cookie._rest: 
                 is_httponly = True
-            elif hasattr(cookie, 'httponly'): # Atribut langsung
+            elif hasattr(cookie, 'httponly'): 
                 is_httponly = cookie.httponly
             
             if not is_httponly:
@@ -239,7 +239,6 @@ def check_security_headers(session, base_url, current_run_timeout):
         if 'strict-transport-security' not in headers: results.append(("MISSING_HSTS", base_url))
         if 'content-security-policy' not in headers and 'content-security-policy-report-only' not in headers: results.append(("MISSING_CSP", base_url))
         
-        # Cek X-Frame-Options atau CSP frame-ancestors
         has_clickjacking_protection = False
         if 'x-frame-options' in headers:
             has_clickjacking_protection = True
@@ -252,9 +251,9 @@ def check_security_headers(session, base_url, current_run_timeout):
             
         if 'x-content-type-options' not in headers:
             results.append(("MISSING_X_CONTENT_TYPE_OPTIONS", base_url))
-        if 'referrer-policy' not in headers: # Cek baru
+        if 'referrer-policy' not in headers: 
             results.append(("MISSING_REFERRER_POLICY", base_url))
-        if 'permissions-policy' not in headers and 'feature-policy' not in headers: # Cek baru
+        if 'permissions-policy' not in headers and 'feature-policy' not in headers: 
             results.append(("MISSING_PERMISSIONS_POLICY", base_url))
             
     except Exception as e: print(f"[-] Error saat cek header: {e}")
@@ -264,29 +263,20 @@ def check_directory_listing(session, base_url, current_run_timeout):
     """Mengecek potensi directory listing."""
     print("[*] Menjalankan: Pengecekan Directory Listing...")
     results = []
-    # Coba akses path dasar, lalu beberapa sub-path umum jika ada
-    # Untuk kesederhanaan, kita hanya cek base_url dan beberapa variasi umum
-    # Dalam skenario nyata, ini akan memerlukan spidering.
     paths_to_check = [base_url]
-    # Tambahkan path umum yang mungkin memiliki listing jika base_url adalah domain root
-    # parsed_target = urlparse(base_url)
-    # if not parsed_target.path or parsed_target.path == '/':
-    #     paths_to_check.extend([urljoin(base_url, p) for p in ["css/", "js/", "images/"]])
+    # Untuk skrip dasar, kita hanya cek base_url.
+    # Spidering atau penambahan path umum bisa dilakukan di skrip yang lebih kompleks.
 
     for path_url in paths_to_check:
         try:
             response = make_request_session(session, path_url, timeout=current_run_timeout)
             if response and response.status_code == 200:
-                # Pola umum pada halaman directory listing
                 dir_listing_patterns = [
-                    r"<title>Index of /.*</title>",
-                    r"<h1>Index of /.*</h1>",
-                    r"Parent Directory</a>",
-                    r"To Parent Directory</a>"
+                    r"<title>Index of /.*</title>", r"<h1>Index of /.*</h1>",
+                    r"Parent Directory</a>", r"To Parent Directory</a>"
                 ]
                 if any(re.search(pattern, response.text, re.IGNORECASE) for pattern in dir_listing_patterns):
                     results.append(("DIRECTORY_LISTING_ENABLED", path_url))
-                    # Tidak perlu return results di sini, mungkin ada di path lain
         except Exception as e:
             print(f"[-] Error saat cek directory listing di {path_url}: {e}")
             continue
@@ -304,7 +294,6 @@ def check_sensitive_files(session, base_url, current_run_timeout):
             if response and response.status_code == 200:
                 if (".git/" in path) and ("[core]" in response.text or "ref:" in response.text): results.append(("SENSITIVE_FILE_GIT", test_url))
                 elif (".env" in path) and any(k in response.text for k in ["PASSWORD", "APP_KEY", "SECRET", "API_KEY"]): results.append(("SENSITIVE_FILE_ENV", test_url))
-                # Tambahkan deteksi untuk backup.zip atau .tar.gz jika content-type sesuai atau ukuran signifikan
         except Exception: continue
     return results
 
@@ -338,7 +327,7 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
     parsed_url = urlparse(base_url)
     params = parse_qs(parsed_url.query)
     if not params: return results
-    xss_payload_template = '<ScRiPt>alert("Hunter1721XSS{}")</ScRiPt>' # Case-insensitive tag
+    xss_payload_template = '<ScRiPt>alert("Hunter1721XSS{}")</ScRiPt>'
     for param_name in params:
         original_value = params[param_name][0] if params[param_name] else ""
         unique_marker = str(int(time.time() * 1000))[-3:] 
@@ -348,7 +337,6 @@ def check_basic_xss_reflected(session, base_url, current_run_timeout):
         test_url = urlunparse(parsed_url._replace(query=urlencode(test_params, doseq=True)))
         try:
             response = make_request_session(session, test_url, timeout=current_run_timeout)
-            # Cari payload dengan case-insensitive karena kita menyuntikkannya seperti itu
             if response and re.search(re.escape(xss_payload), response.text, re.IGNORECASE):
                 results.append(("XSS_REFLECTED_BASIC", test_url))
                 return results
@@ -403,7 +391,7 @@ def run_scanner(target_url, current_run_timeout):
         check_http_forms,
         check_cookie_attributes,
         check_security_headers,
-        check_directory_listing, # Modul baru ditambahkan
+        check_directory_listing, 
         check_sensitive_files,
         check_server_header,
         check_basic_sqli_error,
@@ -421,10 +409,19 @@ def print_results(findings):
     print("\n" + "="*BANNER_WIDTH) 
     print("HASIL PEMINDAIAN OWASP-HUNTER1721".center(BANNER_WIDTH))
     print("="*BANNER_WIDTH)
+    
+    text_wrapper = textwrap.TextWrapper(width=BANNER_WIDTH - 4) # -4 untuk prefix [-] dan spasi
+
     if not findings:
         print("\n[-] Tidak ada potensi kerentanan yang ditemukan dengan cek dasar ini.")
-        print("[-] INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam.")
+        
+        no_vuln_message = "INGAT: Ini BUKAN berarti situs 100% aman! Selalu lakukan pengujian mendalam."
+        # Menggunakan textwrap untuk pesan ini
+        wrapped_lines = text_wrapper.wrap(text=no_vuln_message)
+        for line in wrapped_lines:
+            print(f"[-] {line}")
         return
+        
     print(f"\n[!!!] Ditemukan {len(findings)} potensi temuan:")
     for idx, (vuln_id, location) in enumerate(findings):
         info = VULN_INFO.get(vuln_id)
@@ -441,8 +438,13 @@ def print_results(findings):
             print(f"\n--- Temuan #{idx+1} (Info Tidak Tersedia) ---")
             print(f"  [!] ID Internal : {vuln_id}")
             print(f"  [!] Lokasi/Data : {location}")
+            
     print("\n" + "="*BANNER_WIDTH)
-    print("[*] Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!")
+    
+    final_message = "Pemindaian selesai. SELALU VERIFIKASI SEMUA TEMUAN SECARA MANUAL!"
+    wrapped_final_lines = text_wrapper.wrap(text=final_message)
+    for line in wrapped_final_lines:
+        print(f"[*] {line}")
     print("="*BANNER_WIDTH)
 
 def main():
@@ -474,8 +476,8 @@ def main():
     warning_text1 = "Alat ini adalah prototipe dasar & TIDAK MENJAMIN AKURASI 100%."
     warning_text2 = "Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!"
     warning_text3 = "Gunakan dengan bijak & HANYA pada sistem yang berizin."
-    # Lebar konten di dalam box, dikurangi 2 untuk '|' dan 2 untuk spasi '* '
-    box_content_width = BANNER_WIDTH - 4 
+    
+    box_content_width = BANNER_WIDTH - 4 # Lebar untuk teks di dalam box, setelah dikurangi | * dan  |
 
     print("\n" + "+" + "-" * (BANNER_WIDTH - 2) + "+")
     print(f"| {('* ' + warning_text1).ljust(box_content_width)} |")
