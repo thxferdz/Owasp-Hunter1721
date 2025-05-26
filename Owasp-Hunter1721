@@ -17,6 +17,7 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OWASP-Hunter1721
 INITIAL_DEFAULT_TIMEOUT = 10
 BASELINE_SAMPLES = 3
 NETWORK_TOLERANCE = 1.0
+BANNER_WIDTH = 68 # Lebar banner untuk perataan
 
 # --- Database Informasi Kerentanan ---
 VULN_INFO = {
@@ -221,14 +222,12 @@ def check_open_redirect(session, base_url, current_run_timeout):
     if not params: return results
     redirect_payload = "https://evil.example.com"
     for param_name in params:
-        # Coba pada parameter yang mungkin berisi URL (nama umum)
         if any(p in param_name.lower() for p in ['url', 'redirect', 'next', 'goto', 'dest']):
             original_value = params[param_name][0] if params[param_name] else ""
             test_params = params.copy()
             test_params[param_name] = [redirect_payload]
             test_url = urlunparse(parsed_url._replace(query=urlencode(test_params, doseq=True)))
             try:
-                # Jangan ikuti redirect, periksa header Location
                 response = make_request_session(session, test_url, timeout=current_run_timeout, allow_redirects=False)
                 if response and response.status_code in [301, 302, 303, 307, 308] and 'Location' in response.headers:
                     if redirect_payload in response.headers['Location']:
@@ -236,7 +235,6 @@ def check_open_redirect(session, base_url, current_run_timeout):
                         return results
             except Exception: continue
     return results
-
 
 # --- Engine Utama ---
 
@@ -302,23 +300,32 @@ def main():
     args = parser.parse_args()
     current_run_timeout = args.timeout
 
-    print("""
-********************************************************************
-* OWASP-Hunter1721 v1.1                        *
-* Basic OWASP Top 10 2017 & 2021 Scanner            *
-* *
-* !! PERINGATAN: HANYA UNTUK TUJUAN EDUKASI & SAH !!        *
-********************************************************************
-""")
-    print("""
-+------------------------------------------------------------------+
-| PERINGATAN SANGAT PENTING:                                       |
-|                                                                  |
-| * Alat ini adalah prototipe dasar & TIDAK MENJAMIN AKURASI 100%. |
-| * Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!|
-| * Gunakan dengan bijak & HANYA pada sistem yang berizin.         |
-+------------------------------------------------------------------+
-""")
+    # --- Banner Rata Tengah ---
+    line1 = "OWASP-Hunter1721 v1.1"
+    line2 = "Basic OWASP Top 10 2017 & 2021 Scanner"
+    line3 = "" # Baris kosong untuk spasi
+    line4 = "!! PERINGATAN: HANYA UNTUK TUJUAN EDUKASI & SAH !!"
+
+    print("\n" + "*" * BANNER_WIDTH)
+    print(f"*{line1.center(BANNER_WIDTH - 2)}*")
+    print(f"*{line2.center(BANNER_WIDTH - 2)}*")
+    print(f"*{line3.center(BANNER_WIDTH - 2)}*")
+    print(f"*{line4.center(BANNER_WIDTH - 2)}*")
+    print("*" * BANNER_WIDTH)
+
+
+    # --- Peringatan Rapi ---
+    warning_line1 = "* Alat ini adalah prototipe dasar & TIDAK MENJAMIN AKURASI 100%."
+    warning_line2 = "* Hasilnya hanya INDIKASI AWAL. SELALU lakukan verifikasi manual!"
+    warning_line3 = "* Gunakan dengan bijak & HANYA pada sistem yang berizin."
+    box_width = BANNER_WIDTH # Menyamakan lebar kotak peringatan dengan banner
+
+    print("\n" + "+" + "-" * (box_width -2) + "+") # Mengurangi 2 untuk menyesuaikan dengan | |
+    print(f"| {warning_line1.ljust(box_width - 4)} |") # Mengurangi 4 untuk spasi dan |
+    print(f"| {warning_line2.ljust(box_width - 4)} |")
+    print(f"| {warning_line3.ljust(box_width - 4)} |")
+    print("+" + "-" * (box_width -2) + "+\n")
+
 
     if not urlparse(args.url).scheme:
         print("[-] Error: URL harus menyertakan skema (http:// atau https://)")
